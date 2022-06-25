@@ -29,19 +29,24 @@ func DecodeCmd() *cobra.Command {
 		Args:         cobra.ExactArgs(1),
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return serialDecode(cmd, args[0])
+			disassemble, _ := cmd.Flags().GetBool("disassemble")
+			return serialDecode(cmd, args[0], disassemble)
 		},
 	}
+	cmd.Flags().Bool("disassemble", false, "disassemble when there are native crashes")
+	cmd.Flags().MarkHidden("disassemble")
 	return cmd
 }
 
-func serialDecode(cmd *cobra.Command, message string) error {
-	if strings.HasPrefix(message, "jag decode ") {
-		return jagDecode(cmd, message[11:])
-	} else if strings.HasPrefix(message, "Backtrace:") {
-		return crashDecode(cmd, message)
+func serialDecode(cmd *cobra.Command, message string, disassemble bool) error {
+	if strings.HasPrefix(message, "Backtrace:") {
+		return crashDecode(cmd, message, disassemble)
 	} else {
-		return fmt.Errorf("Could not decode %s", message)
+		if strings.HasPrefix(message, "jag decode ") {
+			return jagDecode(cmd, message[11:])
+		} else {
+			return jagDecode(cmd, message)
+		}
 	}
 }
 
@@ -99,11 +104,17 @@ func jagDecode(cmd *cobra.Command, base64Message string) error {
 	if err != nil {
 		return err
 	}
-	snapshot := filepath.Join(snapshotsCache, programId.String()+".snapshot")
 
-	if _, err := os.Stat(snapshot); errors.Is(err, os.ErrNotExist) {
-		fmt.Fprintf(os.Stderr, "No such file: %s\n", snapshot)
-		return fmt.Errorf("cannot find snapshot for program: %s", programId.String())
+	snapshot := ""
+
+	if programId == uuid.Nil {
+		snapshot = "nosnapshot"
+	} else {
+		snapshot = filepath.Join(snapshotsCache, programId.String()+".snapshot")
+		if _, err := os.Stat(snapshot); errors.Is(err, os.ErrNotExist) {
+			fmt.Fprintf(os.Stderr, "No such file: %s\n", snapshot)
+			return fmt.Errorf("cannot find snapshot for program: %s", programId.String())
+		}
 	}
 
 	decodeCommand := sdk.ToitRun(ctx, sdk.SystemMessageSnapshotPath(), snapshot, "-b", base64Message)
@@ -112,7 +123,7 @@ func jagDecode(cmd *cobra.Command, base64Message string) error {
 	return decodeCommand.Run()
 }
 
-func crashDecode(cmd *cobra.Command, backtrace string) error {
+func crashDecode(cmd *cobra.Command, backtrace string, disassemble bool) error {
 	ctx := cmd.Context()
 	sdk, err := GetSDK(ctx)
 	if err != nil {
@@ -126,13 +137,19 @@ func crashDecode(cmd *cobra.Command, backtrace string) error {
 	elf = filepath.Join(elf, "toit.elf")
 
 	objdump, err := exec.LookPath("xtensa-esp32-elf-objdump")
-	if err != nil {
+	if err != nil && !disassemble {
 		objdump, err = exec.LookPath("objdump")
 	}
 	if err != nil {
 		return err
 	}
-	stacktraceCommand := sdk.ToitRun(ctx, sdk.StacktracePath(), "--objdump", objdump, "--backtrace", backtrace, elf)
+	disassembleString := ""
+	if disassemble {
+		disassembleString = "--disassemble"
+	} else {
+		disassembleString = "--"
+	}
+	stacktraceCommand := sdk.ToitRun(ctx, sdk.StacktracePath(), "--objdump", objdump, "--backtrace", backtrace, disassembleString, elf)
 	stacktraceCommand.Stderr = os.Stderr
 	stacktraceCommand.Stdout = os.Stdout
 	fmt.Println("Crash in native code:")

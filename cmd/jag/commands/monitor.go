@@ -78,7 +78,8 @@ func MonitorCmd() *cobra.Command {
 						if Version != "" {
 							fmt.Printf("\nDecoded by `jag monitor` <%s>\n", Version)
 						}
-						if err := serialDecode(cmd, line); err != nil {
+						disassemble, _ := cmd.Flags().GetBool("disassemble")
+						if err := serialDecode(cmd, line, disassemble); err != nil {
 							if len(postponed) != 0 {
 								fmt.Println(strings.Join(postponed, "\n"))
 								postponed = []string{}
@@ -104,6 +105,8 @@ func MonitorCmd() *cobra.Command {
 
 	cmd.Flags().StringP("port", "p", ConfiguredPort(), "port to monitor")
 	cmd.Flags().BoolP("attach", "a", false, "attach to the serial output without rebooting it")
+	cmd.Flags().Bool("disassemble", false, "disassemble when there are native crashes")
+	cmd.Flags().MarkHidden("disassemble")
 	cmd.Flags().Uint("baud", 115200, "the baud rate for serial monitoring")
 	return cmd
 }
